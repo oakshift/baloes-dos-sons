@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="pt-PT"><meta charset="utf-8"><title>Testes</title><body><pre id="r">a correr</pre>
+<script type="module">
+import { NIVEIS, SONS, FORMAS } from "./js/dados.js";
+import { criarRonda, estrelas } from "./js/rondas.js";
+const r = document.getElementById("r"), linhas = []; let falhas = 0;
+const ok = (c, t) => { if (!c) falhas++; linhas.push((c ? "ok   " : "FALHA ") + t); };
+const esp = ms => new Promise(f => setTimeout(f, ms));
+for (const s of SONS) { const x = await fetch(`audio/${s.som}.mp3`); if (!x.ok) ok(false, "ficheiro de som " + s.som); }
+ok(true, SONS.length + " sons verificados");
+let mau = 0, pouco = 0, vazio = 0;
+for (const n of NIVEIS) for (const f of n.fonemas) for (const errados of [3, 6, 9]) for (const formas of [["im"], ["mM"], FORMAS.map(x => x.id)]) for (let k = 0; k < 20; k++) {
+  const { certos, baloes } = criarRonda(n, f, { formas, errados });
+  if (baloes.some(b => !b.certo && f.evitar.includes(b.grafia))) mau++;
+  if (baloes.filter(b => !b.certo).length !== errados) pouco++;
+  if (!certos.length || baloes.some(b => !b.texto)) vazio++;
+}
+ok(!mau, "nenhum balão errado é resposta defensável"); ok(!pouco, "número de balões errados certo"); ok(!vazio, "há sempre balões certos");
+const a = criarRonda(NIVEIS[0], NIVEIS[0].fonemas[0]).certos.map(c => c.forma.id + c.texto).join(" ");
+ok(a === "ima iMA mma mMA", "o a aparece nas 4 formas: " + a);
+ok(estrelas(0) === 3 && estrelas(2) === 2 && estrelas(9) === 1, "estrelas");
+
+const orig = localStorage.getItem("baloes-dos-sons");
+async function abrir(cfg, w, h) {
+  localStorage.setItem("baloes-dos-sons", JSON.stringify(cfg));
+  const q = document.createElement("iframe"); q.style.cssText = `width:${w}px;height:${h}px;border:0`; document.body.append(q);
+  let som = null;
+  await new Promise(f => { q.onload = f; q.src = "index.html?" + Math.random(); });
+  const W = q.contentWindow, D = q.contentDocument, fe = W.fetch.bind(W);
+  W.fetch = u => { const m = /audio\/(.+)\.mp3/.exec(u); if (m) som = m[1]; return fe(u); };
+  const erros = []; W.addEventListener("error", e => erros.push(e.message)); W.addEventListener("unhandledrejection", e => erros.push(String(e.reason)));
+  await esp(200);
+  return { q, W, D, erros, som: () => som };
+}
+const toca = (W, n) => n.dispatchEvent(new W.PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+async function jogarNivel(i, cfg, w = 390, h = 760) {
+  const n = NIVEIS[i], { q, W, D, erros, som } = await abrir(cfg, w, h);
+  D.querySelectorAll(".nivel")[i].click(); await esp(250);
+  let sobre = 0, fora = 0, recomecou = null;
+  for (let ronda = 0; ronda < n.fonemas.length; ronda++) {
+    const f = n.fonemas.find(x => x.som === som());
+    if (!f) { ok(false, `${n.id}: som desconhecido ${som()}`); break; }
+    const todos = () => [...D.querySelectorAll(".balao")];
+    const certo = b => f.letras.includes(b.getAttribute("aria-label").split(",")[0].toLocaleLowerCase("pt"));
+    const cs = todos().map(b => b.getBoundingClientRect());
+    cs.forEach((p, x) => { if (p.left < -1 || p.right > w + 1 || p.width < 44) fora++; cs.forEach((s, y) => { if (y > x && Math.min(p.right, s.right) - Math.max(p.left, s.left) > 2 && Math.min(p.bottom, s.bottom) - Math.max(p.top, s.top) > 2) sobre++; }); });
+    if (ronda === 0) {
+      toca(W, todos().find(certo)); await esp(50);
+      const cheias = D.querySelectorAll(".casa.cheia").length;
+      toca(W, todos().find(b => !certo(b))); await esp(1600);
+      recomecou = cheias === 1 && D.querySelectorAll(".casa.cheia").length === 0 && !D.querySelector(".rebenta") && D.querySelector(".pontos .agora") === D.querySelector(".pontos").children[0];
+    }
+    for (const b of todos().filter(certo)) toca(W, b);
+    await esp(3000);
+  }
+  ok(recomecou, `${n.id}: errar recomeça o fonema`);
+  ok(!!D.querySelector(".fim") && D.querySelector(".grandes").textContent === "★★☆", `${n.id}: chega ao fim com 2 estrelas`);
+  ok(!sobre && !fora, `${n.id} ${w}x${h}: balões sem sobreposição e dentro do ecrã (${sobre}/${fora})`);
+  ok(!erros.length, `${n.id}: sem erros JS ${erros.join("; ")}`);
+  q.remove();
+}
+const t = [[390, 760], [360, 640], [820, 1100], [1280, 720], [740, 360], [390, 760], [1024, 700]];
+try { for (let i = 0; i < NIVEIS.length; i++) await jogarNivel(i, { errados: i === 1 ? 9 : 6, velocidade: i % 2 ? "parado" : "lento" }, ...t[i]); } catch (e) { ok(false, "exceção: " + e.stack); }
+if (orig === null) localStorage.removeItem("baloes-dos-sons"); else localStorage.setItem("baloes-dos-sons", orig);
+r.textContent = linhas.join("\n") + `\n\nFIM: ${linhas.length - falhas} ok, ${falhas} falhas`;
+document.title = falhas ? "FALHOU" : "PASSOU";
+</script></body></html>
